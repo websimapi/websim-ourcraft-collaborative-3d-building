@@ -23,24 +23,48 @@ class Game {
     this.hostIdInput = document.getElementById('host-id');
     this.connectionStatus = document.getElementById('connection-status');
 
-    this.hostButton.addEventListener('click', () => this.networkManager.hostGame());
-    this.joinButton.addEventListener('click', () => {
+    this.hostButton.addEventListener('click', async () => {
+      try {
+        this.connectionStatus.textContent = 'Connecting...';
+        await this.networkManager.hostGame();
+      } catch (error) {
+        console.error('Failed to host game:', error);
+        this.connectionStatus.textContent = 'Failed to host game. Please try again.';
+      }
+    });
+
+    this.joinButton.addEventListener('click', async () => {
       const hostId = this.hostIdInput.value;
       if (hostId) {
-        this.networkManager.joinGame(hostId);
+        try {
+          this.connectionStatus.textContent = 'Connecting...';
+          await this.networkManager.joinGame(hostId);
+        } catch (error) {
+          console.error('Failed to join game:', error);
+          this.connectionStatus.textContent = 'Failed to join game. Please check the Host ID and try again.';
+        }
       }
     });
   }
 
   init() {
-    this.world.generate();
-    this.gameLoop();
+    try {
+      this.world.generate();
+      this.gameLoop();
+    } catch (error) {
+      console.error('Error initializing game:', error);
+      this.connectionStatus.textContent = 'Failed to initialize game. Please refresh the page.';
+    }
   }
 
   gameLoop() {
-    this.update();
-    this.render();
-    requestAnimationFrame(() => this.gameLoop());
+    try {
+      this.update();
+      this.render();
+      requestAnimationFrame(() => this.gameLoop());
+    } catch (error) {
+      console.error('Error in game loop:', error);
+    }
   }
 
   update() {
@@ -51,7 +75,13 @@ class Game {
 
   render() {
     this.world.render();
-    this.players.forEach(player => player.render());
+    this.players.forEach(player => {
+      try {
+        player.render();
+      } catch (error) {
+        console.error('Error rendering player:', error);
+      }
+    });
   }
 
   hideMenu() {
@@ -65,4 +95,13 @@ class Game {
   }
 }
 
-window.game = new Game();
+// Ensure the DOM is loaded before starting the game
+document.addEventListener('DOMContentLoaded', () => {
+  try {
+    window.game = new Game();
+  } catch (error) {
+    console.error('Failed to start game:', error);
+    document.getElementById('connection-status').textContent = 
+      'Failed to start game. Please refresh the page.';
+  }
+});

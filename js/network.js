@@ -4,53 +4,137 @@ export class NetworkManager {
     this.peer = null;
     this.connections = new Map();
     this.isHost = false;
+    this.connectionAttempts = 0;
+    this.maxRetries = 3;
   }
 
-  hostGame() {
-    this.peer = new Peer();
-    this.isHost = true;
+  async hostGame() {
+    try {
+      this.peer = new Peer({
+        debug: 2,
+        config: {
+          iceServers: [
+            { urls: 'stun:stun.l.google.com:19302' }
+          ]
+        }
+      });
 
-    this.peer.on('open', (id) => {
-      this.game.connectionStatus.textContent = `Your host ID: ${id}`;
-      this.game.hideMenu();
-    });
+      return new Promise((resolve, reject) => {
+        this.peer.on('open', (id) => {
+          this.isHost = true;
+          this.game.connectionStatus.textContent = `Your host ID: ${id}`;
+          this.game.hideMenu();
+          this.setupPeerErrorHandlers();
+          resolve(id);
+        });
 
-    this.peer.on('connection', (conn) => {
-      this.handleNewConnection(conn);
-    });
+        this.peer.on('error', (error) => {
+          console.error('Peer connection error:', error);
+          reject(error);
+        });
+
+        this.peer.on('connection', (conn) => {
+          this.handleNewConnection(conn);
+        });
+      });
+    } catch (error) {
+      console.error('Failed to create peer:', error);
+      throw error;
+    }
   }
 
-  joinGame(hostId) {
-    this.peer = new Peer();
-    this.isHost = false;
+  async joinGame(hostId) {
+    try {
+      this.peer = new Peer({
+        debug: 2,
+        config: {
+          iceServers: [
+            { urls: 'stun:stun.l.google.com:19302' }
+          ]
+        }
+      });
 
-    this.peer.on('open', () => {
-      const conn = this.peer.connect(hostId);
-      this.handleNewConnection(conn);
+      return new Promise((resolve, reject) => {
+        this.peer.on('open', () => {
+          const conn = this.peer.connect(hostId, {
+            reliable: true
+          });
+          
+          conn.on('open', () => {
+            this.handleNewConnection(conn);
+            this.game.hideMenu();
+            resolve(conn);
+          });
+
+          conn.on('error', (error) => {
+            console.error('Connection error:', error);
+            reject(error);
+          });
+        });
+
+        this.peer.on('error', (error) => {
+          console.error('Peer connection error:', error);
+          reject(error);
+        });
+      });
+    } catch (error) {
+      console.error('Failed to join game:', error);
+      throw error;
+    }
+  }
+
+  setupPeerErrorHandlers() {
+    this.peer.on('disconnected', () => {
+      console.log('Peer disconnected - attempting to reconnect...');
+      if (this.connectionAttempts < this.maxRetries) {
+        this.connectionAttempts++;
+        this.peer.reconnect();
+      } else {
+        console.error('Max reconnection attempts reached');
+        this.game.showMenu();
+      }
+    });
+
+    this.peer.on('close', () => {
+      console.log('Peer connection closed');
+      this.game.showMenu();
     });
   }
 
   handleNewConnection(conn) {
-    conn.on('open', () => {
-      this.connections.set(conn.peer, conn);
-      
-      if (this.isHost) {
-        // Send current world state
-        conn.send({
-          type: 'world-state',
-          data: this.game.world.serialize()
-        });
-      }
-    });
+    try {
+      conn.on('open', () => {
+        this.connections.set(conn.peer, conn);
+        
+        if (this.isHost) {
+          conn.send({
+            type: 'world-state',
+            data: this.game.world.serialize()
+          });
+        }
+      });
 
-    conn.on('data', (data) => {
-      this.handleMessage(conn.peer, data);
-    });
+      conn.on('data', (data) => {
+        try {
+          this.handleMessage(conn.peer, data);
+        } catch (error) {
+          console.error('Error handling message:', error);
+        }
+      });
 
-    conn.on('close', () => {
-      this.connections.delete(conn.peer);
-      this.game.players.delete(conn.peer);
-    });
+      conn.on('close', () => {
+        this.connections.delete(conn.peer);
+        this.game.players.delete(conn.peer);
+      });
+
+      conn.on('error', (error) => {
+        console.error('Connection error:', error);
+        this.connections.delete(conn.peer);
+        this.game.players.delete(conn.peer);
+      });
+    } catch (error) {
+      console.error('Error in handleNewConnection:', error);
+    }
   }
 
   handleMessage(peerId, message) {
