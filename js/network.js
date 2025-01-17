@@ -6,11 +6,20 @@ export class NetworkManager {
     this.isHost = false;
     this.connectionAttempts = 0;
     this.maxRetries = 3;
+    
+    // Add heartbeat checking
+    this.lastHeartbeat = Date.now();
+    this.heartbeatInterval = setInterval(() => this.checkHeartbeat(), 5000);
   }
 
   async hostGame() {
     return new Promise((resolve, reject) => {
       try {
+        if (this.peer) {
+          this.peer.destroy();
+        }
+
+        // Create new peer with more robust config
         this.peer = new Peer(undefined, {
           debug: 2,
           host: 'localhost',
@@ -19,38 +28,44 @@ export class NetworkManager {
           config: {
             iceServers: [
               { urls: 'stun:stun.l.google.com:19302' },
-              { urls: 'stun:stun1.l.google.com:19302' }
+              { urls: 'stun:stun1.l.google.com:19302' },
+              { urls: 'stun:stun2.l.google.com:19302' },
+              { urls: 'stun:stun3.l.google.com:19302' }
             ]
+          },
+          retry_options: {
+            retries: 3,
+            minTimeout: 1000,
+            maxTimeout: 5000
           }
         });
 
+        // Better error handling for peer creation
         this.peer.on('open', (id) => {
-          console.log('Peer opened successfully with ID:', id);
+          console.log('Hosting game with ID:', id);
           this.isHost = true;
-          this.game.connectionStatus.textContent = `Your host ID: ${id}`;
-          this.game.hideMenu();
-          this.setupPeerErrorHandlers();
+          this.game.connectionStatus.textContent = `Hosting game. Your ID: ${id}`;
+          this.setupPeerEventHandlers();
+          this.lastHeartbeat = Date.now();
           resolve(id);
         });
 
+        // Handle initial connection error
         this.peer.on('error', (error) => {
-          console.error('Peer connection error:', error);
-          this.game.connectionStatus.textContent = `Connection error: ${error.message}`;
+          console.error('Peer error:', error);
+          if (error.type === 'network' || error.type === 'server-error') {
+            this.game.connectionStatus.textContent = 'Network error. Please check your connection.';
+          } else if (error.type === 'browser-incompatible') {
+            this.game.connectionStatus.textContent = 'Browser not supported. Please use Chrome or Firefox.';
+          } else {
+            this.game.connectionStatus.textContent = `Connection error: ${error.type}`;
+          }
           reject(error);
-        });
-
-        this.peer.on('connection', (conn) => {
-          this.handleNewConnection(conn);
-        });
-
-        this.peer.on('disconnected', () => {
-          console.log('Connection lost. Attempting to reconnect...');
-          this.attemptReconnection();
         });
 
       } catch (error) {
         console.error('Failed to create peer:', error);
-        this.game.connectionStatus.textContent = `Failed to create peer: ${error.message}`;
+        this.game.connectionStatus.textContent = 'Failed to initialize networking. Please try again.';
         reject(error);
       }
     });
@@ -71,8 +86,15 @@ export class NetworkManager {
           config: {
             iceServers: [
               { urls: 'stun:stun.l.google.com:19302' },
-              { urls: 'stun:stun1.l.google.com:19302' }
+              { urls: 'stun:stun1.l.google.com:19302' },
+              { urls: 'stun:stun2.l.google.com:19302' },
+              { urls: 'stun:stun3.l.google.com:19302' }
             ]
+          },
+          retry_options: {
+            retries: 3,
+            minTimeout: 1000,
+            maxTimeout: 5000
           }
         });
 
@@ -104,7 +126,13 @@ export class NetworkManager {
 
         this.peer.on('error', (error) => {
           console.error('Peer error:', error);
-          this.game.connectionStatus.textContent = `Peer error: ${error.message}`;
+          if (error.type === 'network' || error.type === 'server-error') {
+            this.game.connectionStatus.textContent = 'Network error. Please check your connection.';
+          } else if (error.type === 'browser-incompatible') {
+            this.game.connectionStatus.textContent = 'Browser not supported. Please use Chrome or Firefox.';
+          } else {
+            this.game.connectionStatus.textContent = `Connection error: ${error.type}`;
+          }
           reject(error);
         });
 
@@ -116,36 +144,50 @@ export class NetworkManager {
     });
   }
 
+  setupPeerEventHandlers() {
+    if (!this.peer) return;
+
+    this.peer.on('connection', (conn) => {
+      console.log('New peer trying to connect:', conn.peer);
+      this.handleNewConnection(conn);
+    });
+
+    this.peer.on('disconnected', () => {
+      console.log('Disconnected from server. Attempting to reconnect...');
+      this.game.connectionStatus.textContent = 'Connection lost. Reconnecting...';
+      this.attemptReconnection();
+    });
+
+    this.peer.on('close', () => {
+      console.log('Connection closed');
+      this.game.connectionStatus.textContent = 'Connection closed';
+      this.game.showMenu();
+      clearInterval(this.heartbeatInterval);
+    });
+  }
+
+  checkHeartbeat() {
+    const now = Date.now();
+    if (now - this.lastHeartbeat > 10000) { // 10 seconds timeout
+      console.log('Connection seems dead, attempting to reconnect...');
+      this.attemptReconnection();
+    }
+  }
+
   attemptReconnection() {
     if (this.connectionAttempts < this.maxRetries) {
       this.connectionAttempts++;
       setTimeout(() => {
         console.log(`Reconnection attempt ${this.connectionAttempts}/${this.maxRetries}`);
-        this.peer.reconnect();
+        if (this.peer) {
+          this.peer.reconnect();
+        }
       }, 1000 * this.connectionAttempts);
     } else {
       console.error('Max reconnection attempts reached');
       this.game.connectionStatus.textContent = 'Connection lost. Please refresh the page.';
       this.game.showMenu();
     }
-  }
-
-  setupPeerErrorHandlers() {
-    this.peer.on('disconnected', () => {
-      console.log('Peer disconnected - attempting to reconnect...');
-      if (this.connectionAttempts < this.maxRetries) {
-        this.connectionAttempts++;
-        this.peer.reconnect();
-      } else {
-        console.error('Max reconnection attempts reached');
-        this.game.showMenu();
-      }
-    });
-
-    this.peer.on('close', () => {
-      console.log('Peer connection closed');
-      this.game.showMenu();
-    });
   }
 
   handleNewConnection(conn) {
@@ -197,6 +239,9 @@ export class NetworkManager {
           this.game.world.deserialize(message.data);
         }
         break;
+      case 'heartbeat':
+        this.lastHeartbeat = Date.now();
+        break;
     }
   }
 
@@ -222,6 +267,13 @@ export class NetworkManager {
 
   broadcast(message) {
     this.connections.forEach(conn => conn.send(message));
+    this.broadcastHeartbeat();
+  }
+
+  broadcastHeartbeat() {
+    this.broadcast({
+      type: 'heartbeat'
+    });
   }
 
   update() {

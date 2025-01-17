@@ -12,15 +12,35 @@ class Game {
     this.inputHandler = new InputHandler(this);
     this.players = new Map();
     
+    // Improved error handling
     window.addEventListener('unhandledrejection', this.handleUnhandledRejection.bind(this));
+    window.addEventListener('error', this.handleGlobalError.bind(this));
+    
     this.setupDOMElements();
     this.init();
   }
 
   handleUnhandledRejection(event) {
     console.error('Unhandled promise rejection:', event.reason);
-    this.connectionStatus.textContent = 'Connection error. Please try again.';
-    event.preventDefault(); // Prevent the default handler
+    
+    // More specific error messages
+    let errorMessage = 'Connection error. Please try again.';
+    if (event.reason?.type === 'peer-unavailable') {
+      errorMessage = 'Could not find the specified host. Please check the ID.';
+    } else if (event.reason?.type === 'network') {
+      errorMessage = 'Network connection failed. Please check your internet connection.';
+    } else if (event.reason?.type === 'server-error') {
+      errorMessage = 'Server error. Please try again later.';
+    }
+    
+    this.connectionStatus.textContent = errorMessage;
+    event.preventDefault();
+  }
+
+  handleGlobalError(event) {
+    console.error('Global error:', event.error);
+    this.connectionStatus.textContent = 'An error occurred. Please refresh the page.';
+    event.preventDefault();
   }
 
   setupDOMElements() {
