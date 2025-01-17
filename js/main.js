@@ -12,8 +12,15 @@ class Game {
     this.inputHandler = new InputHandler(this);
     this.players = new Map();
     
+    window.addEventListener('unhandledrejection', this.handleUnhandledRejection.bind(this));
     this.setupDOMElements();
     this.init();
+  }
+
+  handleUnhandledRejection(event) {
+    console.error('Unhandled promise rejection:', event.reason);
+    this.connectionStatus.textContent = 'Connection error. Please try again.';
+    event.preventDefault(); // Prevent the default handler
   }
 
   setupDOMElements() {
@@ -26,23 +33,31 @@ class Game {
     this.hostButton.addEventListener('click', async () => {
       try {
         this.connectionStatus.textContent = 'Connecting...';
+        this.hostButton.disabled = true;
         await this.networkManager.hostGame();
       } catch (error) {
         console.error('Failed to host game:', error);
-        this.connectionStatus.textContent = 'Failed to host game. Please try again.';
+        this.connectionStatus.textContent = `Failed to host game: ${error.message}`;
+      } finally {
+        this.hostButton.disabled = false;
       }
     });
 
     this.joinButton.addEventListener('click', async () => {
-      const hostId = this.hostIdInput.value;
+      const hostId = this.hostIdInput.value.trim();
       if (hostId) {
         try {
           this.connectionStatus.textContent = 'Connecting...';
+          this.joinButton.disabled = true;
           await this.networkManager.joinGame(hostId);
         } catch (error) {
           console.error('Failed to join game:', error);
-          this.connectionStatus.textContent = 'Failed to join game. Please check the Host ID and try again.';
+          this.connectionStatus.textContent = `Failed to join game: ${error.message}`;
+        } finally {
+          this.joinButton.disabled = false;
         }
+      } else {
+        this.connectionStatus.textContent = 'Please enter a Host ID';
       }
     });
   }
@@ -95,13 +110,15 @@ class Game {
   }
 }
 
-// Ensure the DOM is loaded before starting the game
-document.addEventListener('DOMContentLoaded', () => {
+// Wait for both DOM and resources to load
+window.addEventListener('load', () => {
   try {
     window.game = new Game();
   } catch (error) {
     console.error('Failed to start game:', error);
-    document.getElementById('connection-status').textContent = 
-      'Failed to start game. Please refresh the page.';
+    const status = document.getElementById('connection-status');
+    if (status) {
+      status.textContent = `Failed to start game: ${error.message}`;
+    }
   }
 });

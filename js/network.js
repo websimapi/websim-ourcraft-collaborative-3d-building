@@ -9,18 +9,23 @@ export class NetworkManager {
   }
 
   async hostGame() {
-    try {
-      this.peer = new Peer({
-        debug: 2,
-        config: {
-          iceServers: [
-            { urls: 'stun:stun.l.google.com:19302' }
-          ]
-        }
-      });
+    return new Promise((resolve, reject) => {
+      try {
+        this.peer = new Peer(undefined, {
+          debug: 2,
+          host: 'localhost',
+          port: 9000,
+          path: '/myapp',
+          config: {
+            iceServers: [
+              { urls: 'stun:stun.l.google.com:19302' },
+              { urls: 'stun:stun1.l.google.com:19302' }
+            ]
+          }
+        });
 
-      return new Promise((resolve, reject) => {
         this.peer.on('open', (id) => {
+          console.log('Peer opened successfully with ID:', id);
           this.isHost = true;
           this.game.connectionStatus.textContent = `Your host ID: ${id}`;
           this.game.hideMenu();
@@ -30,37 +35,56 @@ export class NetworkManager {
 
         this.peer.on('error', (error) => {
           console.error('Peer connection error:', error);
+          this.game.connectionStatus.textContent = `Connection error: ${error.message}`;
           reject(error);
         });
 
         this.peer.on('connection', (conn) => {
           this.handleNewConnection(conn);
         });
-      });
-    } catch (error) {
-      console.error('Failed to create peer:', error);
-      throw error;
-    }
+
+        this.peer.on('disconnected', () => {
+          console.log('Connection lost. Attempting to reconnect...');
+          this.attemptReconnection();
+        });
+
+      } catch (error) {
+        console.error('Failed to create peer:', error);
+        this.game.connectionStatus.textContent = `Failed to create peer: ${error.message}`;
+        reject(error);
+      }
+    });
   }
 
   async joinGame(hostId) {
-    try {
-      this.peer = new Peer({
-        debug: 2,
-        config: {
-          iceServers: [
-            { urls: 'stun:stun.l.google.com:19302' }
-          ]
+    return new Promise((resolve, reject) => {
+      try {
+        if (!hostId) {
+          throw new Error('Host ID is required');
         }
-      });
 
-      return new Promise((resolve, reject) => {
+        this.peer = new Peer(undefined, {
+          debug: 2,
+          host: 'localhost',
+          port: 9000,
+          path: '/myapp',
+          config: {
+            iceServers: [
+              { urls: 'stun:stun.l.google.com:19302' },
+              { urls: 'stun:stun1.l.google.com:19302' }
+            ]
+          }
+        });
+
         this.peer.on('open', () => {
+          console.log('Peer opened, attempting to connect to host:', hostId);
           const conn = this.peer.connect(hostId, {
-            reliable: true
+            reliable: true,
+            serialization: 'json'
           });
           
           conn.on('open', () => {
+            console.log('Connected to host successfully');
             this.handleNewConnection(conn);
             this.game.hideMenu();
             resolve(conn);
@@ -68,18 +92,41 @@ export class NetworkManager {
 
           conn.on('error', (error) => {
             console.error('Connection error:', error);
+            this.game.connectionStatus.textContent = `Connection error: ${error.message}`;
             reject(error);
+          });
+
+          conn.on('close', () => {
+            console.log('Connection closed');
+            this.game.showMenu();
           });
         });
 
         this.peer.on('error', (error) => {
-          console.error('Peer connection error:', error);
+          console.error('Peer error:', error);
+          this.game.connectionStatus.textContent = `Peer error: ${error.message}`;
           reject(error);
         });
-      });
-    } catch (error) {
-      console.error('Failed to join game:', error);
-      throw error;
+
+      } catch (error) {
+        console.error('Failed to join game:', error);
+        this.game.connectionStatus.textContent = `Failed to join: ${error.message}`;
+        reject(error);
+      }
+    });
+  }
+
+  attemptReconnection() {
+    if (this.connectionAttempts < this.maxRetries) {
+      this.connectionAttempts++;
+      setTimeout(() => {
+        console.log(`Reconnection attempt ${this.connectionAttempts}/${this.maxRetries}`);
+        this.peer.reconnect();
+      }, 1000 * this.connectionAttempts);
+    } else {
+      console.error('Max reconnection attempts reached');
+      this.game.connectionStatus.textContent = 'Connection lost. Please refresh the page.';
+      this.game.showMenu();
     }
   }
 
@@ -166,7 +213,6 @@ export class NetworkManager {
   updateBlock(blockData) {
     this.game.world.updateBlock(blockData);
     if (this.isHost) {
-      // Broadcast to all other players
       this.broadcast({
         type: 'block-update',
         data: blockData
@@ -179,7 +225,6 @@ export class NetworkManager {
   }
 
   update() {
-    // Send player state to all connected peers
     if (this.peer && this.connections.size > 0) {
       const playerState = {
         position: this.game.player.position,
